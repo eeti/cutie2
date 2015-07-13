@@ -33,9 +33,9 @@ helper.startsWith = function(s1, s2){
 	return s1.substring(0,s2.length) == s2;
 }
 
+// This used to come standard in the bot.users array. Whatevs.
 var myFriends = [];
 
-// This used to come standard in the bot.users array. Whatevs.
 helper.updateFriends = function(evt){
 	var found = false;
 	
@@ -46,7 +46,7 @@ helper.updateFriends = function(evt){
 		}
 	});
 	
-	if( ! found ) myFriends.push(evt);
+	if( ! found ) myFriends.push(evt); // add the user to the end of the array if we didn't find them
 }
 
 // Helper function to find a friend by steamid.
@@ -61,6 +61,60 @@ helper.findFriend = function(id){
 	else return null;
 }
 
+// Helper function/vars for /quiet
+var quiet = [];
+
+// Returns true if the person was quieted and false if they were unquieted.
+helper.quiet = function(id){
+	// This only changes when we add/remove to it, so we'll read it in every time we plan to modify it
+	quiet = JSON.parse(fs.readFileSync("quiet.cached"));
+	
+	// Find our target. /quiet toggles it on/off.
+	var f = false;
+	var g = true;
+	quiet.forEach(function(v,k){
+		if( v.id == id ){
+			v.quieted=!v.quieted;
+			f=true;
+			g=v.quieted;
+		}
+	});
+	
+	// We didn't find it, add them to the end of the array
+	if( ! f ){
+		quiet.push({id: id, quieted: true});
+		g=true;
+	}
+	
+	// Save our changes
+	fs.writeFileSync("quiet.cached", JSON.stringify(quiet));
+	
+	// Return our result
+	return g;
+}
+
+// Pretty self-explanatory.
+helper.isQuieted = function(id){
+	var m = false;
+	quiet.forEach(function(v,k){
+		if( v.id == id ) m=v.quieted;
+	});
+	return m;
+}
+
+// Broadcast message helper
+helper.broadcast = function(id, msg){
+	// Go through each friend and if they're not /quiet-ed, send them the broadcasted message
+	myFriends.forEach(function(v,k){
+		if( ! helper.isQuieted(v.friendid) && v.friendid != id ) friends.sendMessage(v.friendid, msg);
+	});
+}
+
+// Helper function for welcoming users
+helper.welcome = function(id){
+	H.reply(id, "Welcome to Cutie! To chat with the other users currently using Cutie, just type. To stop receiving messages, type /quiet. For more information, type /help.");
+}
+
 // Helper function for the below
 helper.syntaxAndExit = function(err){
 	console.log("cutie: " + err);
@@ -68,6 +122,7 @@ helper.syntaxAndExit = function(err){
 	process.exit(1);
 }
 
+// H is a shorthand for helper
 var H = helper;
 
 // Make sure we have the correct number of arguments
@@ -112,10 +167,15 @@ client.on('logOnResponse', function(r){
 	// Did everything go OK?
 	if( r.eresult == Steam.EResult.OK ){
 		H.info("Logged on");
+		
+		// Read our /quiet stuff (or create it if it doesn't exist)
+		if( ! fs.existsSync("quiet.cached") ) fs.writeFileSync("quiet.cached", JSON.stringify([]));
+		else quiet=JSON.parse(fs.readFileSync("quiet.cached"));
+		
+		// Go online and change/set my name
 		friends.setPersonaState(Steam.EPersonaState.Online);
 		friends.setPersonaName("Cutie");
 	}
-	
 	// Something bad happened
 	else {
 		var error = "error " + r.eresult;
@@ -148,42 +208,84 @@ user.on('updateMachineAuth', function(s, c){
 	});
 });
 
-// Here's where the actual bot part begins
-
-// Commands. An object so it's extensible.
-var commands = {};
-
-commands.about = function(s, args){
-	H.reply(s, "This is Cutie 0.0.1.");
-}
-
-// Message handler
-friends.on('message', function(s,m){
-	// General logging stuff
-	if( m == "" ) return H.info(H.findFriend(s).player_name + " is typing...");
-	
-	H.info(H.findFriend(s).player_name + ": " + m);
-	
-	// Execute commands (they start with /)
-	if( H.startsWith(m, "/") ){
-		var m2 = m.substring(1).split(" ");
-		if( commands[m2[0]] ){
-			commands[m2[0]](s, m2);
-		}
-		else {
-			H.reply(s, "Invalid command.");
-		}
-	}
-	// Broadcast to everyone
-	else {
-		// TODO: implement group chatting (lol)
-	}
-	
-});
-
 // This used to come standard
 friends.on('personaState', function(e){
 	if( client.steamID == e.friendid ) return;
 	H.debug("Recieved a profile update for " + e.friendid + "!");
+	
+	// Hacky way to accept requests on-the-fly. TODO: find a better way
+	if( ! "persona_state" in e ){
+		friends.addFriend(e.friendid);
+		H.info("Added friend " + e.friendid);
+		H.welcome(e.friendid);
+	}
+
 	H.updateFriends(e);
+});
+
+// -- Here's where the actual bot part begins --
+
+// Commands. An object so it's extensible.
+var commands = {};
+
+commands.about = {};
+commands.about.description = "Get information about Cutie.";
+commands.about.run = function(s, args){
+	H.reply(s, "This is Cutie 0.0.1.");
+}
+
+commands.quiet = {};
+commands.quiet.description = "Silence Cutie for a while."
+commands.quiet.run = function(s, args){
+	if( ! helper.quiet(s) ) H.reply(s, "You're no longer receiving group chats. Type /quiet to receive chats again.");
+	else H.reply(s, "You're now receiving group chats. Type /quiet to stop receiving chats.");
+}
+
+commands.help = {};
+commands.help.description = "Get help with Cutie.";
+commands.help.run = function(s, args){
+	var commandsList = "";
+	for( var f in commands ){
+		commandsList+="/" + f + " - " + commands[f].description + "\n";
+	}
+	
+	H.reply(s, "Hey there! I'm Cutie, an autonomous groupchat bot. Besides just typing to chat with the others currently using Cutie, you can use the following commands:\n\n" + commandsList);
+}
+
+commands.me = {};
+commands.me.description = "Do something"
+commands.me.run = function(s, args){
+	H.broadcast(0, "* " + H.findFriend(s).player_name + " " + args.slice(1).join(" "));
+}
+
+// Message handler
+friends.on('message', function(s,m){
+	if( m == "" ) return H.info(H.findFriend(s).player_name + " is typing...");
+	
+	H.info(H.findFriend(s).player_name + ": " + m);
+	
+	// Execute commands
+	if( H.startsWith(m, "/") ){
+		var m2 = m.substring(1).split(" ");
+		if( commands[m2[0]] ){
+			return commands[m2[0]].run(s, m2);
+		}
+		else {
+			return H.reply(s, "Invalid command.");
+		}
+	}
+	else{
+		// TODO: implement an antispam system
+		H.broadcast(s, H.findFriend(s).player_name + ": " + m);
+	}
+});
+
+// Friend request handler. Auto-accept requests by default.
+friends.on('relationships', function(){
+	for( var friend in friends.friends ){
+		if( friends.friends[friend] == Steam.EFriendRelationship.RequestRecipient ){
+			friends.addFriend(friend);
+			H.info("Added " + friend);
+		}
+	}
 });
