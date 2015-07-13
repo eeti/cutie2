@@ -1,0 +1,10 @@
+{
+	"name": "cutie2",
+	"version": "0.0.1",
+	"description": "Steam groupchat bot with extra functions",
+	"homepage": "http://github.com/eeti/cutie2",
+	"bugs": {
+		"url": "https://github.com/eeti/cutie2/issue"
+	},
+	"license": "GPL-3.0"
+}
