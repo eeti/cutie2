@@ -200,6 +200,17 @@ helper.delnote = function(id, name){
 	else return H.reply(id, "You are not the owner of that note, or it doesn't exist.")
 }
 
+// Helper functions for permissions
+helper.isAdmin = function(id){
+	if( ! fs.existsSync("admins.cached") ) return false;
+	var admins = JSON.parse(fs.readFileSync("admins.cached"));
+	var m = false;
+	admins.forEach(function(v){
+		if(v == id) m=true;
+	});
+	return m;
+}
+
 // Helper function for the below
 helper.syntaxAndExit = function(err){
 	console.log("cutie: " + err);
@@ -386,9 +397,90 @@ commands.pm.run = function(s,args){
 	H.reply(s, "PM: me -> " + friendstring + ": " + msg);
 }
 
+commands.fquiet = {};
+commands.fquiet.description = "Admin command - force (un)quiet. /fquiet [NAME] [REASON]";
+commands.fquiet.run = function(s,args){
+	if( ! H.isAdmin(s) ) H.reply(s, "This is an admin-only command.");
+	if( args.length < 3 ) H.reply(s, "Please specify someone to fquiet and a reason.");
+	
+	var friends = H.findFriendsByName(args[1]);
+	
+	if( friends.length == 0 ) return H.reply(s, "No people found with that name.");
+	
+	var reason = args.slice(2).join(" ");
+	
+	friends.forEach(function(v,k){
+		console.log(v.friendid);
+		if( H.quiet(v.friendid) ){
+			H.broadcast(0, "* " + v.player_name + " was force-quieted by " + H.findFriend(s).player_name + " for: " + reason);
+			H.reply(v.friendid, "You were force-quieted by " + H.findFriend(s).player_name + " for: " + reason);
+		}
+		else{
+			H.broadcast(0, "* " + v.player_name + " was force-unquieted by " + H.findFriend(s).player_name + " for: " + reason);
+			H.reply(v.friendid, "You were force-unquieted by " + H.findFriend(s).player_name + " for: " + reason);
+		}
+		
+		
+	});
+}
+
+commands.list = {};
+commands.list.description = "List users currently using Cutie.";
+commands.list.run = function(s,args){
+	
+	var listall = false;
+	if( args.length > 1 && args[1] == "all" ) listall=true;
+	
+	var base;
+	
+	if( ! listall ){
+		var curr = [];
+		myFriends.forEach(function(v,k){
+			if( ! H.isQuieted(v.friendid) ) curr.push(v);
+		});
+	
+		if( ! listall ) resp = curr.length + " people are using Cutie out of " + myFriends.length + " people.";
+		base = curr;
+	}
+	else {
+		resp = myFriends.length + " people use Cutie."
+		base = myFriends;
+	}
+	
+	resp += "\n\n";
+	
+	base.forEach(function(v,k){
+		var state;
+		
+		if( v.game_played_app_id > 0 ) state = "playing " + v.game_name;
+		else if( v.persona_state == 0 ) state = "offline";
+		else if( v.persona_state == 1 ) state = "online";
+		else if( v.persona_state == 2 ) state = "busy";
+		else if( v.persona_state == 3 ) state = "away";
+		else if( v.persona_state == 4 ) state = "snooze";
+		else if( v.persona_state == 5 ) state = "looking to play";
+		else state = "Looking to Trade";
+		
+		resp+=v.player_name;
+		if( H.isAdmin(s) ) resp+=" (" + v.friendid + ")"
+		resp+=" is " + state + "\n";
+	});
+	
+	H.reply(s, resp);
+}
+
+commands.broadcast = {};
+commands.broadcast.description = "Admin command - broadcast a message. /broadcast [MESSAGE]";
+commands.broadcast.run = function(s,args){
+	if( ! H.isAdmin(s) ) H.reply(s, "You must be an admin to broadcast.");
+	if( args.length < 2 ) H.reply(s, "Please specify a message to broadcast.");
+	
+	H.broadcast(0, "* " + args.slice(1).join(" "));
+}
+
 // Message handler
 friends.on('message', function(s,m){
-	if( H.isQuieted(s) && m != "/quiet" && m != "" ) return H.reply(s, "You can't speak because you're quieted. Type /quiet to speak.");
+	if( H.isQuieted(s) && m != "/quiet" && m != "" && ! H.isAdmin(s) ) return H.reply(s, "You can't speak because you're quieted. Type /quiet to speak.");
 	
 	if( m == "" ) return H.info(H.findFriend(s).player_name + " is typing...");
 	
