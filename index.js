@@ -4,7 +4,7 @@
 // For use with node-steam >= 1.0.0-rc
 // Use with any other/earlier versions will NOT work. At all. Don't try it. You will be disappointed, I promise.
 
-// Internal function helper
+// Internal function helpers
 var helper = {};
 
 // Logging helper
@@ -29,6 +29,7 @@ helper.reply = function(s, m){
 	friends.sendMessage(s, m);
 }
 
+// String helpers
 helper.startsWith = function(s1, s2){
 	return s1.substring(0,s2.length) == s2;
 }
@@ -59,6 +60,19 @@ helper.findFriend = function(id){
 	
 	if( i > -1 ) return myFriends[i];
 	else return null;
+}
+
+// Helper function to find a friend by name.
+helper.findFriendsByName = function(name){
+	var friends = [];
+	
+	myFriends.forEach(function(v,k){
+		if( v.player_name.toLowerCase().indexOf(name.toLowerCase()) > -1 ){
+			friends.push(v);
+		}
+	});
+	
+	return friends;
 }
 
 // Helper function/vars for /quiet
@@ -113,6 +127,77 @@ helper.broadcast = function(id, msg){
 // Helper function for welcoming users
 helper.welcome = function(id){
 	H.reply(id, "Welcome to Cutie! To chat with the other users currently using Cutie, just type. To stop receiving messages, type /quiet. For more information, type /help.");
+}
+
+// Helper function for antispam
+var lastMessage = {};
+var offenses = {};
+helper.antispam = function(id){
+	
+	if( ! lastMessage.hasOwnProperty(id) || ! offenses.hasOwnProperty(id) ){
+		lastMessage[id] = Date.now();
+		offenses[id] = 0;
+		return false;
+	}
+	else {
+		if( Date.now()-lastMessage[id] < 400 ){
+			if( offenses[id] > 3 ){
+				helper.quiet(id);
+				H.reply(id, "You've been force-quieted for spamming. To unquiet, type /quiet.");
+				lastMessage[id] = Date.now();
+				offenses[id]=0;
+				return true;
+			}
+			else {
+				H.reply(id, "Please don't spam.");
+				lastMessage[id] = Date.now();
+				offenses[id]+=1;
+				return true;
+			}
+		}
+		else {
+			lastMessage[id] = Date.now();
+			return false;
+		}
+	}
+	
+}
+
+// Helper functions for notes
+var notes = {};
+helper.savenotes = function(){
+	fs.writeFileSync("notes.cached", JSON.stringify(notes));
+}
+helper.loadnotes = function(){
+	if( ! fs.existsSync("notes.cached") ) helper.savenotes();
+	else notes=JSON.parse(fs.readFileSync("notes.cached"));
+}
+helper.takenote = function(name, contents, id){
+	helper.loadnotes();
+	
+	if( notes.hasOwnProperty(name) ){
+		if( id != notes[name].owner ) return H.reply(id, "Error: you are not the owner of " + name);
+		notes[name].contents = contents;
+		return H.reply(id, "Note updated.");
+	}
+	
+	notes[name] = {
+		contents: contents,
+		owner: id
+	}
+	
+	helper.savenotes();
+	
+	H.reply(id, "Note saved.");
+}
+helper.delnote = function(id, name){
+	helper.loadnotes();
+	
+	if( notes.hasOwnProperty(name) && id == notes[name].owner ){
+		delete notes[name];
+		return H.reply(id, "Note deleted.");
+	}
+	else return H.reply(id, "You are not the owner of that note, or it doesn't exist.")
 }
 
 // Helper function for the below
@@ -237,7 +322,7 @@ commands.about.run = function(s, args){
 commands.quiet = {};
 commands.quiet.description = "Silence Cutie for a while."
 commands.quiet.run = function(s, args){
-	if( ! helper.quiet(s) ) H.reply(s, "You're no longer receiving group chats. Type /quiet to receive chats again.");
+	if( helper.quiet(s) ) H.reply(s, "You're no longer receiving group chats. Type /quiet to receive chats again.");
 	else H.reply(s, "You're now receiving group chats. Type /quiet to stop receiving chats.");
 }
 
@@ -253,21 +338,69 @@ commands.help.run = function(s, args){
 }
 
 commands.me = {};
-commands.me.description = "Do something"
+commands.me.description = "Do something";
 commands.me.run = function(s, args){
+	if( args.length < 2 ) return H.reply(s, "Provide an action, eg /me eats a sandwich");
 	H.broadcast(0, "* " + H.findFriend(s).player_name + " " + args.slice(1).join(" "));
+}
+
+commands.note = {};
+commands.note.description = "Take a note. /note [NAME] [MESSAGE]";
+commands.note.run = function(s, args){
+	if( args.length < 2 ){
+		return H.reply(s, "I have " + Object.keys(notes).length + " notes saved. Use /notes list to see their names.");
+	}
+	else if( args.length < 3 ){
+		if( args[1] == "list" ) return H.reply(s, "Notes saved: " + Object.keys(notes) );
+		else if( notes.hasOwnProperty(args[1]) ) return H.reply(s, "Note " + args[1] + " by " + H.findFriend(notes[args[1]].owner).player_name + ": " + notes[args[1]].contents);
+		else return H.reply(s, "I don't have a note named that.");
+	}
+	else {
+		if( args[1] == "del" ) return H.delnote(s, args[2]);
+		helper.takenote(args[1], args.slice(2).join(" "), s);
+	}
+}
+
+commands.pm = {};
+commands.pm.description = "Send a private message. /pm [NAME] [MESSAGE]";
+commands.pm.run = function(s,args){
+	if( args.length < 3 ) return H.reply(s, "Not enough arguments: /pm [PARTOFNAME] [MESSAGE]");
+	
+	var friends = H.findFriendsByName(args[1]);
+	
+	if( friends.length == 0 ) return H.reply(s, "No people found with that name.");
+	
+	var msg = args.slice(2).join(" ");
+	
+	friends.forEach(function(v,k){
+		H.reply(v.friendid, "PM: " + H.findFriend(s).player_name + " -> me: " + msg);
+	});
+	
+	var friendstring = "";
+
+	friends.forEach(function(v,k){
+		friendstring += v.player_name;
+		if( k < friends.length-1 ) friendstring+=", ";
+	});
+	
+	H.reply(s, "PM: me -> " + friendstring + ": " + msg);
 }
 
 // Message handler
 friends.on('message', function(s,m){
+	if( H.isQuieted(s) && m != "/quiet" && m != "" ) return H.reply(s, "You can't speak because you're quieted. Type /quiet to speak.");
+	
 	if( m == "" ) return H.info(H.findFriend(s).player_name + " is typing...");
 	
+	if( H.antispam(s) ) m="[spam] " + m;
 	H.info(H.findFriend(s).player_name + ": " + m);
+	
+	if( H.startsWith(m, "[spam] ") ) return;
 	
 	// Execute commands
 	if( H.startsWith(m, "/") ){
 		var m2 = m.substring(1).split(" ");
-		if( commands[m2[0]] ){
+		if( commands[m2[0]] && commands[m2[0]].hasOwnProperty("run") ){
 			return commands[m2[0]].run(s, m2);
 		}
 		else {
@@ -275,7 +408,6 @@ friends.on('message', function(s,m){
 		}
 	}
 	else{
-		// TODO: implement an antispam system
 		H.broadcast(s, H.findFriend(s).player_name + ": " + m);
 	}
 });
@@ -286,6 +418,10 @@ friends.on('relationships', function(){
 		if( friends.friends[friend] == Steam.EFriendRelationship.RequestRecipient ){
 			friends.addFriend(friend);
 			H.info("Added " + friend);
+			H.welcome(friend);
 		}
 	}
 });
+
+// Load notes
+H.loadnotes();
